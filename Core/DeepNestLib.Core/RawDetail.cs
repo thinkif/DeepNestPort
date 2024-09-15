@@ -7,6 +7,20 @@ namespace DeepNestLib
 {
     public class RawDetail
     {
+        #region Jeffrey
+
+        /// <summary>
+        /// 是否允许旋转
+        /// </summary>
+        public bool allowRotate { get; set; } = true;
+
+        /// <summary>
+        /// 是否包含搭接量, 如果包含搭接量, 则必须排在画面最左侧
+        /// </summary>
+        public bool isIncludeOverlap { get; set; }
+
+        #endregion
+
         public List<LocalContour> Outers = new List<LocalContour>();
         public List<LocalContour> Holes = new List<LocalContour>();
         public object Tag;
@@ -67,6 +81,10 @@ namespace DeepNestLib
 
 
             }
+
+            po.allowRotate = this.allowRotate;
+            po.isIncludeOverlap = this.isIncludeOverlap;
+
             return po;
         }
 

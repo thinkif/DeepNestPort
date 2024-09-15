@@ -1,9 +1,4 @@
 ﻿using ClipperLib;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Xml.Linq;
 
 namespace DeepNestLib
 {
@@ -778,6 +773,10 @@ namespace DeepNestLib
         public static NFP cloneTree(NFP tree)
         {
             NFP newtree = new NFP();
+            // Jeffrey 新增属性
+            newtree.allowRotate = tree.allowRotate;
+            newtree.isIncludeOverlap = tree.isIncludeOverlap;
+
             foreach (var t in tree.Points)
             {
                 newtree.AddPoint(new SvgPoint(t.x, t.y) { exact = t.exact });
@@ -972,7 +971,7 @@ namespace DeepNestLib
             }
         }
 
-        public PolygonTreeItem[] tree;        
+        public PolygonTreeItem[] tree;
 
 
         public bool useHoles;
@@ -1054,7 +1053,7 @@ namespace DeepNestLib
     {
         string stringify();
     }
-    
+
     public class PopulationItem
     {
         public object processing = null;
@@ -1077,7 +1076,7 @@ namespace DeepNestLib
         public List<PlacementItem> sheetplacements = new List<PlacementItem>();
         public List<PlacementItem> placements = new List<PlacementItem>();
     }
-    
+
     public class NestItem
     {
         public NFP Polygon;

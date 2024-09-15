@@ -51,6 +51,7 @@ namespace DeepNestLib
                         {
                             cntrs2.Add(new LocalContour() { Points = pp.Select(z => new PointF((float)z.x, (float)z.y)).ToList() });
                             pp.Clear();
+                            continue;
                         }
                     }
                     var len = ss.Length;
@@ -79,7 +80,7 @@ namespace DeepNestLib
                 }
             }
 
-            foreach (var item in doc.Descendants("rect"))
+            foreach (var item in doc.Descendants().Where(z => z.Name.LocalName == "rect"))
             {
                 float xx = 0;
                 float yy = 0;

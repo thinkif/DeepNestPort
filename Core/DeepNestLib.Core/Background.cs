@@ -1,12 +1,7 @@
 ﻿using ClipperLib;
 using Minkowski;
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace DeepNestLib
 {
@@ -496,6 +491,11 @@ namespace DeepNestLib
         }
         public static NFP rotatePolygon(NFP polygon, float degrees)
         {
+            if (!polygon.allowRotate)
+            {
+                return polygon;
+            }
+
             NFP rotated = new NFP();
 
             var angle = degrees * Math.PI / 180;
@@ -519,6 +519,9 @@ namespace DeepNestLib
                     rotated.children.Add(rotatePolygon(polygon.children[j], degrees));
                 }
             }
+
+            rotated.allowRotate = polygon.allowRotate;
+            rotated.isIncludeOverlap = polygon.isIncludeOverlap;
 
             return rotated;
         }
@@ -613,6 +616,10 @@ namespace DeepNestLib
                         r.source = part.source;
                         r.id = part.id;
 
+                        // Jeffrey 新增属性
+                        r.allowRotate = part.allowRotate;
+                        r.isIncludeOverlap = part.isIncludeOverlap;
+
                         // rotation is not in-place
                         part = r;
                         parts[i] = r;
@@ -667,6 +674,9 @@ namespace DeepNestLib
                         placements.Add(position);
                         placed.Add(part);
                         totalPlaced++;
+
+                        // 为了避免在这种情况下minwidth为null而导致fitness为NaN
+                        minwidth = double.MaxValue - 1;
 
                         continue;
                     }
@@ -911,6 +921,11 @@ namespace DeepNestLib
                     (GeometryUtil._almostEqual(minarea, area) && (minx != null && GeometryUtil._almostEqual(shiftvector.x, minx) && shiftvector.y < miny))
                     )
                             {
+                                if (part.isIncludeOverlap && shiftvector.x > 1)
+                                {
+                                    continue;
+                                }
+
                                 minarea = area;
 
                                 minwidth = rectbounds != null ? rectbounds.width : 0;
@@ -962,7 +977,11 @@ namespace DeepNestLib
                 }
                 else
                 {
-                    fitness += (minwidth.Value / sheetarea) + minarea.Value;
+                    if (double.IsNaN(fitness))
+                    {
+                        fitness = 0;
+                    }
+                    fitness += (minwidth.Value / sheetarea) + (minarea ?? 0);
                 }
 
                 //}
@@ -1065,7 +1084,7 @@ namespace DeepNestLib
 
             for (var i = 0; i < parts.Count; i++)
             {
-                parts[i].rotation = rotations[i];
+                parts[i].rotation = parts[i].allowRotate ? rotations[i] : 0;
                 parts[i].id = ids[i];
                 parts[i].source = sources[i];
                 if (!data.config.simplify)
@@ -1619,8 +1638,8 @@ namespace DeepNestLib
 
                     }
                     else
-                    {             
-                        nfp = NewMinkowskiSum(B, A, type, true, takeOnlyBiggestArea: false);                        
+                    {
+                        nfp = NewMinkowskiSum(B, A, type, true, takeOnlyBiggestArea: false);
                     }
                 }
             }

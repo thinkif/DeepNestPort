@@ -1,12 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Xml.Linq;
-
-namespace DeepNestLib
+﻿namespace DeepNestLib
 {
     public class NestingContext
     {
@@ -52,6 +44,9 @@ namespace DeepNestLib
             {
                 NFP clone = new NFP();
                 clone.id = item.id;
+                // Jeffrey 新增属性
+                clone.allowRotate = item.allowRotate;
+                clone.isIncludeOverlap = item.isIncludeOverlap;
                 clone.source = item.source;
                 clone.Points = item.Points.Select(z => new SvgPoint(z.x, z.y) { exact = z.exact }).ToArray();
                 if (item.children != null)
@@ -62,6 +57,9 @@ namespace DeepNestLib
                         clone.children.Add(new NFP());
                         var l = clone.children.Last();
                         l.id = citem.id;
+                        // Jeffrey 新增属性
+                        l.allowRotate = citem.allowRotate;
+                        l.isIncludeOverlap = citem.isIncludeOverlap;
                         l.source = citem.source;
                         l.Points = citem.Points.Select(z => new SvgPoint(z.x, z.y) { exact = z.exact }).ToArray();
                     }
@@ -75,6 +73,9 @@ namespace DeepNestLib
                 NFP clone = new NFP();
                 clone.id = item.id;
                 clone.source = item.source;
+                // Jeffrey 新增属性
+                clone.allowRotate = item.allowRotate;
+                clone.isIncludeOverlap = item.isIncludeOverlap;
                 clone.Points = item.Points.Select(z => new SvgPoint(z.x, z.y) { exact = z.exact }).ToArray();
                 if (item.children != null)
                 {
@@ -85,6 +86,9 @@ namespace DeepNestLib
                         var l = clone.children.Last();
                         l.id = citem.id;
                         l.source = citem.source;
+                        // Jeffrey 新增属性
+                        l.allowRotate = citem.allowRotate;
+                        l.isIncludeOverlap = citem.isIncludeOverlap;
                         l.Points = citem.Points.Select(z => new SvgPoint(z.x, z.y) { exact = z.exact }).ToArray();
                     }
                 }
@@ -160,7 +164,7 @@ namespace DeepNestLib
             }
             Iterations++;
         }
-       
+
         public void AssignPlacement(SheetPlacement plcpr)
         {
             current = plcpr;
@@ -257,13 +261,13 @@ namespace DeepNestLib
             var ns = Background.clone(nfp);
             sheet.Points = ns.Points;
             sheet.children = ns.children;
-            
+
             sheet.Width = sheet.WidthCalculated;
             sheet.Height = sheet.HeightCalculated;
             sheet.source = src;
-            
+
             sheet.Name = "sheet" + (Sheets.Count + 1);
-            Sheets.Add(sheet);            
+            Sheets.Add(sheet);
             ReorderSheets();
         }
 
@@ -291,7 +295,7 @@ namespace DeepNestLib
             foreach (var item in dir.GetFiles("*.svg"))
             {
                 try
-                {                    
+                {
                     var dets = SvgParser.LoadSvg(item.FullName);
                     foreach (var r in dets)
                     {
@@ -299,7 +303,7 @@ namespace DeepNestLib
                         for (int i = 0; i < count; i++)
                         {
                             ImportFromRawDetail(r, src);
-                        }                        
+                        }
                     }
                 }
                 catch (Exception ex)

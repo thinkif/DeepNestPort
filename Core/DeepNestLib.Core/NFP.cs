@@ -10,6 +10,20 @@ namespace DeepNestLib
 {
     public class NFP : IStringify
     {
+        #region Jeffrey
+
+        /// <summary>
+        /// 是否允许旋转
+        /// </summary>
+        public bool allowRotate { get; set; } = true;
+
+        /// <summary>
+        /// 是否包含搭接量, 如果包含搭接量, 则必须排在画面最左侧
+        /// </summary>
+        public bool isIncludeOverlap { get; set; }
+
+        #endregion
+
         public int Z;
         public bool fitted { get { return sheet != null; } }
         public NFP sheet;
