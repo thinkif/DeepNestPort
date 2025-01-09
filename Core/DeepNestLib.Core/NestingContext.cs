@@ -1,4 +1,12 @@
-﻿namespace DeepNestLib
+﻿using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Xml.Linq;
+
+namespace DeepNestLib
 {
     public class NestingContext
     {
@@ -164,7 +172,7 @@
             }
             Iterations++;
         }
-
+       
         public void AssignPlacement(SheetPlacement plcpr)
         {
             current = plcpr;
@@ -261,13 +269,13 @@
             var ns = Background.clone(nfp);
             sheet.Points = ns.Points;
             sheet.children = ns.children;
-
+            
             sheet.Width = sheet.WidthCalculated;
             sheet.Height = sheet.HeightCalculated;
             sheet.source = src;
-
+            
             sheet.Name = "sheet" + (Sheets.Count + 1);
-            Sheets.Add(sheet);
+            Sheets.Add(sheet);            
             ReorderSheets();
         }
 
@@ -295,7 +303,7 @@
             foreach (var item in dir.GetFiles("*.svg"))
             {
                 try
-                {
+                {                    
                     var dets = SvgParser.LoadSvg(item.FullName);
                     foreach (var r in dets)
                     {
@@ -303,7 +311,7 @@
                         for (int i = 0; i < count; i++)
                         {
                             ImportFromRawDetail(r, src);
-                        }
+                        }                        
                     }
                 }
                 catch (Exception ex)

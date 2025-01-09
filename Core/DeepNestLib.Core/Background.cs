@@ -526,6 +526,89 @@ namespace DeepNestLib
             return rotated;
         }
 
+        public static double CalculateVerticalEfficiency(NFP part, PlacementItem position, NFP[] placed)
+        {
+            var bounds = GeometryUtil.getPolygonBounds(part);
+            double partHeight = bounds.height;
+            double usedVerticalSpace = position.y + partHeight;
+
+            // 已放置零件的最大和平均高度
+            double maxPlacedHeight = 0;
+            double avgPlacedHeight = 0;
+            if (placed != null && placed.Length > 0)
+            {
+                foreach (var p in placed)
+                {
+                    var pBounds = GeometryUtil.getPolygonBounds(p);
+                    maxPlacedHeight = Math.Max(maxPlacedHeight, pBounds.y + pBounds.height);
+                    avgPlacedHeight += (pBounds.y + pBounds.height);
+                }
+                avgPlacedHeight /= placed.Length;
+            }
+
+            // 评分计算(越小越好):
+            double verticalGapCost = usedVerticalSpace - maxPlacedHeight; // 1. 垂直空隙成本
+            double heightVarianceCost = Math.Abs(usedVerticalSpace - avgPlacedHeight); // 2. 平均高度差异成本  
+            double topPriorityCost = position.y * 2; // 3. 上边优先成本
+
+            return verticalGapCost + heightVarianceCost + topPriorityCost;
+        }
+
+        private static double EvaluateRotationHeight(NFP part, NFP sheet, NFP[] placedParts)
+        {
+            var bounds = GeometryUtil.getPolygonBounds(part);
+            double score = 0;
+
+            // 1. 计算当前零件高度贡献
+            score += bounds.height;
+
+            // 2. 计算与已放置零件的垂直重叠度
+            if (placedParts != null && placedParts.Length > 0)
+            {
+                // 获取当前部件的宽度
+                double currentPartWidth = bounds.width;
+
+                // 查找可以放置当前部件的最大高度
+                var embedList = placedParts.Where(p =>
+                {
+                    var b = GeometryUtil.getPolygonBounds(p);
+                    // 检查水平方向是否有足够空间放置当前部件
+                    return b.width + currentPartWidth <= sheet.WidthCalculated; // 假设sheet是当前工作表
+                });
+
+                var current = embedList.Any() ? embedList.ToArray() : placedParts;
+
+                double maxHeight = current
+                    .Max(p =>
+                    {
+                        var b = GeometryUtil.getPolygonBounds(p);
+                        return b.y + b.height;
+                    });
+            }
+
+            // 3. 考虑旋转后部件是否能放置在画布内
+            bool fitsWithinCanvas = bounds.width <= sheet.WidthCalculated && bounds.height <= sheet.HeightCalculated;
+
+            if (!fitsWithinCanvas)
+            {
+                // 如果旋转后不适合，增加一个较大的惩罚分数
+                score = double.MaxValue; // 惩罚值可根据需要调整
+            }
+
+            return score;
+        }
+
+
+        private static bool IsContainerPart(NFP part)
+        {
+            var bounds = GeometryUtil.getPolygonBounds(part);
+            double boundArea = bounds.width * bounds.height;
+            double partArea = Math.Abs(GeometryUtil.polygonArea(part));
+
+            // 如果边界矩形面积远大于实际面积,说明是容器型零件
+            return (boundArea / partArea) > 3;
+        }
+
         public static SheetPlacement placeParts(NFP[] sheets, NFP[] parts, SvgNestConfig config, int nestindex)
         {
             if (sheets == null || sheets.Count() == 0) return null;
@@ -543,6 +626,7 @@ namespace DeepNestLib
             for (i = 0; i < parts.Length; i++)
             {
                 var r = rotatePolygon(parts[i], parts[i].rotation);
+                r.allowRotate = parts[i].allowRotate;
                 r.Rotation = parts[i].rotation;
                 r.source = parts[i].source;
                 r.Id = parts[i].Id;
@@ -550,6 +634,23 @@ namespace DeepNestLib
             }
 
             parts = rotated.ToArray();
+
+            // 按照以下优先级对parts进行排序:
+            // 优化零件排序策略:
+            parts = parts.OrderByDescending(p => IsContainerPart(p)) // 容器型零件优先
+                        .ThenByDescending(p => p.children != null && p.children.Count > 0) // 具有内部孔洞的其次
+                        .ThenBy(p =>
+                        {
+                            var bounds = GeometryUtil.getPolygonBounds(p);
+                            return bounds.width * bounds.height / Math.Abs(GeometryUtil.polygonArea(p));
+                        })
+                        .ThenByDescending(p => Math.Abs(GeometryUtil.polygonArea(p)))
+                        .ThenByDescending(p =>
+                        {
+                            var bounds = GeometryUtil.getPolygonBounds(p);
+                            return bounds.height;
+                        })
+                        .ToArray();
 
             List<SheetPlacementItem> allplacements = new List<SheetPlacementItem>();
 
@@ -593,8 +694,47 @@ namespace DeepNestLib
                     part = parts[i];
                     // inner NFP
                     NFP[] sheetNfp = null;
+
+                    // 修改旋转计算逻辑
+                    double bestScore = double.MaxValue;
+
                     // try all possible rotations until it fits
                     // (only do this for the first part of each sheet, to ensure that all parts that can be placed are, even if we have to to open a lot of sheets)
+                    // for (j = 0; j < (360f / config.rotations); j++)
+                    // {
+                    //     sheetNfp = getInnerNfp(sheet, part, 0, config);
+
+                    //     if (sheetNfp != null && sheetNfp.Count() > 0)
+                    //     {
+                    //         if (sheetNfp[0].length == 0)
+                    //         {
+                    //             throw new ArgumentException();
+                    //         }
+                    //         else
+                    //         {
+                    //             break;
+                    //         }
+                    //     }
+
+                    //     var r = rotatePolygon(part, 360f / config.rotations);
+                    //     r.rotation = part.rotation + (360f / config.rotations);
+                    //     r.source = part.source;
+                    //     r.id = part.id;
+
+                    //     // Jeffrey 新增属性
+                    //     r.allowRotate = part.allowRotate;
+                    //     r.isIncludeOverlap = part.isIncludeOverlap;
+
+                    //     // rotation is not in-place
+                    //     part = r;
+                    //     parts[i] = r;
+
+                    //     if (part.rotation > 360f)
+                    //     {
+                    //         part.rotation = part.rotation % 360f;
+                    //     }
+                    // }
+
                     for (j = 0; j < (360f / config.rotations); j++)
                     {
                         sheetNfp = getInnerNfp(sheet, part, 0, config);
@@ -605,10 +745,15 @@ namespace DeepNestLib
                             {
                                 throw new ArgumentException();
                             }
-                            else
+                            else if (parts.Length > 1)
                             {
                                 break;
                             }
+                        }
+
+                        if (!part.allowRotate)
+                        {
+                            break;
                         }
 
                         var r = rotatePolygon(part, 360f / config.rotations);
@@ -620,15 +765,24 @@ namespace DeepNestLib
                         r.allowRotate = part.allowRotate;
                         r.isIncludeOverlap = part.isIncludeOverlap;
 
-                        // rotation is not in-place
-                        part = r;
-                        parts[i] = r;
+                        // 评估当前旋转角度
+                        double currentScore = EvaluateRotationHeight(r, sheet, placed.ToArray());
 
-                        if (part.rotation > 360f)
+                        // rotation is not in-place
+
+                        if (currentScore < bestScore)
                         {
-                            part.rotation = part.rotation % 360f;
+                            bestScore = currentScore;
+                            part = r;
+                            parts[i] = r;
+
+                            if (part.rotation > 360f)
+                            {
+                                part.rotation = part.rotation % 360f;
+                            }
                         }
                     }
+
                     // part unplaceable, skip
                     if (sheetNfp == null || sheetNfp.Count() == 0)
                     {
@@ -644,12 +798,17 @@ namespace DeepNestLib
                         {
                             for (k = 0; k < sheetNfp[j].length; k++)
                             {
+                                // if (position == null ||
+                                //     ((sheetNfp[j][k].x - part[0].x) < position.x) ||
+                                //     (
+                                //     GeometryUtil._almostEqual(sheetNfp[j][k].x - part[0].x, position.x)
+                                //     && ((sheetNfp[j][k].y - part[0].y) < position.y))
+                                //     )
+                                // 修改为(上边优先):
                                 if (position == null ||
-                                    ((sheetNfp[j][k].x - part[0].x) < position.x) ||
-                                    (
-                                    GeometryUtil._almostEqual(sheetNfp[j][k].x - part[0].x, position.x)
-                                    && ((sheetNfp[j][k].y - part[0].y) < position.y))
-                                    )
+                                    ((sheetNfp[j][k].y - part[0].y) < position.y) ||
+                                    (GeometryUtil._almostEqual(sheetNfp[j][k].y - part[0].y, position.y)
+                                     && ((sheetNfp[j][k].x - part[0].x) < position.x)))
                                 {
                                     position = new PlacementItem()
                                     {
@@ -674,9 +833,6 @@ namespace DeepNestLib
                         placements.Add(position);
                         placed.Add(part);
                         totalPlaced++;
-
-                        // 为了避免在这种情况下minwidth为null而导致fitness为NaN
-                        minwidth = double.MaxValue - 1;
 
                         continue;
                     }
@@ -871,7 +1027,12 @@ namespace DeepNestLib
                                 // weigh width more, to help compress in direction of gravity
                                 if (config.placementType == PlacementTypeEnum.gravity)
                                 {
-                                    area = rectbounds.width * 2 + rectbounds.height;
+                                    // area = rectbounds.width * 2 + rectbounds.height;
+                                    // 计算垂直效率评分
+                                    double verticalScore = CalculateVerticalEfficiency(part, shiftvector, placed.ToArray());
+
+                                    // 综合考虑高度和宽度,但更重视垂直方向
+                                    area = rectbounds.height * 3 + rectbounds.width + verticalScore * 2;
                                 }
                                 else
                                 {
@@ -914,11 +1075,20 @@ namespace DeepNestLib
                             }
 
                             //console.timeEnd('evalmerge');
-                            if (
-                    minarea == null ||
+                            //         if (
+                            // minarea == null ||
+                            // area < minarea ||
+                            // (GeometryUtil._almostEqual(minarea, area) && (minx == null || shiftvector.x < minx)) ||
+                            // (GeometryUtil._almostEqual(minarea, area) && (minx != null && GeometryUtil._almostEqual(shiftvector.x, minx) && shiftvector.y < miny))
+                            // )
+                            // 修改为(优先y小的):
+                            if (minarea == null ||
                     area < minarea ||
-                    (GeometryUtil._almostEqual(minarea, area) && (minx == null || shiftvector.x < minx)) ||
-                    (GeometryUtil._almostEqual(minarea, area) && (minx != null && GeometryUtil._almostEqual(shiftvector.x, minx) && shiftvector.y < miny))
+                                (GeometryUtil._almostEqual(minarea, area) &&
+                                (miny == null || shiftvector.y < miny)) ||
+                                (GeometryUtil._almostEqual(minarea, area) &&
+                                (miny != null && GeometryUtil._almostEqual(shiftvector.y, miny)
+                                && shiftvector.x < minx))
                     )
                             {
                                 if (part.isIncludeOverlap && shiftvector.x > 1)
