@@ -526,13 +526,14 @@ namespace DeepNestLib
             return rotated;
         }
 
+        /*
         public static double CalculateVerticalEfficiency(NFP part, PlacementItem position, NFP[] placed)
         {
             var bounds = GeometryUtil.getPolygonBounds(part);
             double partHeight = bounds.height;
             double usedVerticalSpace = position.y + partHeight;
 
-            // 已放置零件的最大和平均高度
+            // 已放置零件的最大和平均高度 
             double maxPlacedHeight = 0;
             double avgPlacedHeight = 0;
             if (placed != null && placed.Length > 0)
@@ -548,10 +549,132 @@ namespace DeepNestLib
 
             // 评分计算(越小越好):
             double verticalGapCost = usedVerticalSpace - maxPlacedHeight; // 1. 垂直空隙成本
-            double heightVarianceCost = Math.Abs(usedVerticalSpace - avgPlacedHeight); // 2. 平均高度差异成本  
-            double topPriorityCost = position.y * 2; // 3. 上边优先成本
+            double heightVarianceCost = Math.Abs(usedVerticalSpace - avgPlacedHeight); // 2. 平均高度差异成本
+            double topPriorityCost = position.y * 2; // 3. 上边优先成本 
 
             return verticalGapCost + heightVarianceCost + topPriorityCost;
+        }
+        */
+
+        public static double CalculateVerticalEfficiency(NFP part, PlacementItem position, NFP[] placed)
+        {
+            var bounds = GeometryUtil.getPolygonBounds(part);
+            double partHeight = bounds.height;
+            double partWidth = bounds.width;
+            double usedVerticalSpace = position.y + partHeight;
+            double partArea = Math.Abs(GeometryUtil.polygonArea(part));
+
+            // 1. 基础统计信息计算
+            double maxPlacedHeight = 0;
+            double maxPlacedWidth = 0;
+            double avgPlacedHeight = 0;
+            double totalPlacedArea = 0;
+            Dictionary<double, double> heightMap = new Dictionary<double, double>();
+
+            if (placed != null && placed.Length > 0)
+            {
+                foreach (var p in placed)
+                {
+                    var pBounds = GeometryUtil.getPolygonBounds(p);
+                    maxPlacedHeight = Math.Max(maxPlacedHeight, pBounds.y + pBounds.height);
+                    maxPlacedWidth = Math.Max(maxPlacedWidth, pBounds.x + pBounds.width);
+                    avgPlacedHeight += (pBounds.y + pBounds.height);
+                    totalPlacedArea += Math.Abs(GeometryUtil.polygonArea(p));
+
+                    // 记录每个高度层的使用宽度
+                    double pHeight = pBounds.y + pBounds.height;
+                    if (!heightMap.ContainsKey(pHeight))
+                        heightMap[pHeight] = pBounds.width;
+                    else
+                        heightMap[pHeight] += pBounds.width;
+                }
+                avgPlacedHeight /= placed.Length;
+            }
+
+            // 2. 评分计算(综合多个因素,所有分数越小越好)
+            double score = 0;
+
+            // 2.1 垂直位置代价 - 优先靠顶
+            double verticalPositionCost = position.y * 1.5;
+
+            // 2.2 水平位置代价 - 优先靠左
+            double horizontalPositionCost = position.x;
+
+            // 2.3 高度差异代价 - 尽量减少零件之间的高度差
+            double heightVarianceCost = Math.Abs(usedVerticalSpace - avgPlacedHeight) * 2;
+
+            // 2.4 垂直空隙代价 - 避免零件之间出现大的垂直间隙
+            double verticalGapCost = Math.Max(0, position.y - maxPlacedHeight) * 3;
+
+            // 2.5 宽度利用率代价 - 避免产生过多水平空隙
+            double widthUtilizationCost = 0;
+            if (position.x + partWidth > maxPlacedWidth)
+            {
+                widthUtilizationCost = (position.x + partWidth - maxPlacedWidth) * 2;
+            }
+
+            // 2.6 层高度利用率 - 检查是否能填补现有层的空隙
+            double layerUtilizationBonus = 0;
+            foreach (var heightLevel in heightMap.Keys)
+            {
+                if (Math.Abs(position.y - heightLevel) < partHeight * 0.5)
+                {
+                    // 如果零件放在现有层,给予奖励
+                    layerUtilizationBonus -= 50;
+                    break;
+                }
+            }
+
+            // 2.7 紧凑性奖励 - 鼓励形成紧凑布局
+            double compactnessBonus = 0;
+            if (position.y < avgPlacedHeight && position.x < maxPlacedWidth)
+            {
+                compactnessBonus -= 30;
+            }
+
+            // 2.8 板材利用率考虑
+            double materialUtilizationCost = 0;
+            if (placed != null && placed.Length > 0)
+            {
+                double currentUtilization = totalPlacedArea / (maxPlacedWidth * maxPlacedHeight);
+                double newUtilization = (totalPlacedArea + partArea) /
+                    (Math.Max(maxPlacedWidth, position.x + partWidth) *
+                     Math.Max(maxPlacedHeight, position.y + partHeight));
+
+                materialUtilizationCost = (currentUtilization - newUtilization) * 100;
+            }
+
+            // 3. 组合所有评分因素
+            score = verticalPositionCost +
+                    horizontalPositionCost +
+                    heightVarianceCost +
+                    verticalGapCost +
+                    widthUtilizationCost +
+                    layerUtilizationBonus +
+                    compactnessBonus +
+                    materialUtilizationCost;
+
+            // 4. 特殊情况处理
+            // 4.1 首个位置给予额外奖励
+            if (placed == null || placed.Length == 0)
+            {
+                score -= 100;
+            }
+
+            // 4.2 靠近顶部给予额外奖励
+            if (position.y < partHeight)
+            {
+                score -= 80;
+            }
+
+            // 4.3 如果零件能完美嵌入现有空隙,给予巨大奖励
+            if (position.y + partHeight <= maxPlacedHeight &&
+                position.x + partWidth <= maxPlacedWidth)
+            {
+                score -= 200;
+            }
+
+            return score;
         }
 
         private static double EvaluateRotationHeight(NFP part, NFP sheet, NFP[] placedParts)
@@ -584,6 +707,8 @@ namespace DeepNestLib
                         var b = GeometryUtil.getPolygonBounds(p);
                         return b.y + b.height;
                     });
+
+                score += maxHeight;
             }
 
             // 3. 考虑旋转后部件是否能放置在画布内
@@ -605,8 +730,21 @@ namespace DeepNestLib
             double boundArea = bounds.width * bounds.height;
             double partArea = Math.Abs(GeometryUtil.polygonArea(part));
 
-            // 如果边界矩形面积远大于实际面积,说明是容器型零件
-            return (boundArea / partArea) > 3;
+            // 计算所有孔洞面积
+            double holeArea = 0;
+            if (part.children != null)
+            {
+                foreach (var hole in part.children)
+                {
+                    holeArea += Math.Abs(GeometryUtil.polygonArea(hole));
+                }
+            }
+
+            // 实际可用面积 = 外轮廓面积 - 孔洞面积
+            double usableArea = partArea - holeArea;
+
+            // 判断是否为容器型零件
+            return (boundArea / usableArea) > 3 || holeArea > (partArea * 0.2);
         }
 
         public static SheetPlacement placeParts(NFP[] sheets, NFP[] parts, SvgNestConfig config, int nestindex)
@@ -637,20 +775,42 @@ namespace DeepNestLib
 
             // 按照以下优先级对parts进行排序:
             // 优化零件排序策略:
-            parts = parts.OrderByDescending(p => IsContainerPart(p)) // 容器型零件优先
-                        .ThenByDescending(p => p.children != null && p.children.Count > 0) // 具有内部孔洞的其次
-                        .ThenBy(p =>
-                        {
-                            var bounds = GeometryUtil.getPolygonBounds(p);
-                            return bounds.width * bounds.height / Math.Abs(GeometryUtil.polygonArea(p));
-                        })
-                        .ThenByDescending(p => Math.Abs(GeometryUtil.polygonArea(p)))
-                        .ThenByDescending(p =>
-                        {
-                            var bounds = GeometryUtil.getPolygonBounds(p);
-                            return bounds.height;
-                        })
-                        .ToArray();
+            parts = parts
+                .OrderByDescending(p => IsContainerPart(p)) // 容器型零件优先
+                .ToArray();
+
+            //if (nestindex > 2)
+            //{
+            //    parts = parts
+            //        .OrderByDescending(p => IsContainerPart(p)) // 容器型零件优先
+            //        .ThenByDescending(p =>
+            //        {
+            //            var bounds = GeometryUtil.getPolygonBounds(p);
+            //            return bounds.height; // 较高的零件优先
+            //        })
+            //        .ThenByDescending(p =>
+            //        {
+            //            // 计算零件的复杂度得分
+            //            var area = Math.Abs(GeometryUtil.polygonArea(p));
+            //            var bounds = GeometryUtil.getPolygonBounds(p);
+            //            double complexityScore = 0;
+
+            //            // 考虑高宽比
+            //            complexityScore += bounds.height / bounds.width;
+
+            //            // 考虑面积利用率
+            //            complexityScore += area / (bounds.width * bounds.height);
+
+            //            // 考虑孔洞情况
+            //            if (p.children != null)
+            //            {
+            //                complexityScore += p.children.Count * 0.1;
+            //            }
+
+            //            return complexityScore;
+            //        })
+            //        .ToArray();
+            //}
 
             List<SheetPlacementItem> allplacements = new List<SheetPlacementItem>();
 
@@ -683,7 +843,7 @@ namespace DeepNestLib
                 var combinedNfp = new List<List<ClipperLib.IntPoint>>();
                 var error = false;
                 IntPoint[][] clipperSheetNfp = null;
-                double? minwidth = null;
+                double? minheight = null;
                 PlacementItem position = null;
                 double? minarea = null;
                 for (i = 0; i < parts.Length; i++)
@@ -735,7 +895,7 @@ namespace DeepNestLib
                     //     }
                     // }
 
-                    for (j = 0; j < (360f / config.rotations); j++)
+                    for (j = 0; j < config.rotations; j++)
                     {
                         sheetNfp = getInnerNfp(sheet, part, 0, config);
 
@@ -783,6 +943,8 @@ namespace DeepNestLib
                         }
                     }
 
+                    sheetNfp = getInnerNfp(sheet, part, 0, config);
+
                     // part unplaceable, skip
                     if (sheetNfp == null || sheetNfp.Count() == 0)
                     {
@@ -820,7 +982,8 @@ namespace DeepNestLib
 
                                     };
 
-
+                                    part.x = position.x;
+                                    part.y = position.y;
                                 }
                             }
                         }
@@ -942,7 +1105,7 @@ namespace DeepNestLib
                     var minx = null;
                     var miny = null;
                     var nf, area, shiftvector;*/
-                    minwidth = null;
+                    minheight = null;
                     minarea = null;
                     double? minx = null;
                     double? miny = null;
@@ -1032,7 +1195,7 @@ namespace DeepNestLib
                                     double verticalScore = CalculateVerticalEfficiency(part, shiftvector, placed.ToArray());
 
                                     // 综合考虑高度和宽度,但更重视垂直方向
-                                    area = rectbounds.height * 3 + rectbounds.width + verticalScore * 2;
+                                    area = rectbounds.height * verticalScore;
                                 }
                                 else
                                 {
@@ -1098,8 +1261,10 @@ namespace DeepNestLib
 
                                 minarea = area;
 
-                                minwidth = rectbounds != null ? rectbounds.width : 0;
+                                minheight = rectbounds != null ? rectbounds.height : 0;
                                 position = shiftvector;
+                                part.x = position.x;
+                                part.y = position.y;
                                 if (minx == null || shiftvector.x < minx)
                                 {
                                     minx = shiftvector.x;
@@ -1141,7 +1306,7 @@ namespace DeepNestLib
                     //console.timeEnd('placement');
                 }
                 //if(minwidth){
-                if (!minwidth.HasValue)
+                if (!minheight.HasValue)
                 {
                     fitness = double.NaN;
                 }
@@ -1151,7 +1316,7 @@ namespace DeepNestLib
                     {
                         fitness = 0;
                     }
-                    fitness += (minwidth.Value / sheetarea) + (minarea ?? 0);
+                    fitness += (minheight.Value / sheetarea) + (minarea ?? 0);
                 }
 
                 //}
