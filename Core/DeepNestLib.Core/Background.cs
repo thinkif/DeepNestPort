@@ -982,6 +982,11 @@ namespace DeepNestLib
 
                                     };
 
+                                    if (part.isIncludeOverlap)
+                                    {
+                                        position.x = config.overlapOffset;
+                                    }
+
                                     part.x = position.x;
                                     part.y = position.y;
                                 }
@@ -1156,6 +1161,10 @@ namespace DeepNestLib
                                 source = part.source.Value,
                                 rotation = part.rotation
                             };
+                            if (part.isIncludeOverlap)
+                            {
+                                shiftvector.x = config.overlapOffset;
+                            }
                             PolygonBounds rectbounds = null;
                             if (config.placementType == PlacementTypeEnum.gravity || config.placementType == PlacementTypeEnum.box)
                             {
@@ -1254,7 +1263,7 @@ namespace DeepNestLib
                                 && shiftvector.x < minx))
                     )
                             {
-                                if (part.isIncludeOverlap && shiftvector.x > 1)
+                                if (part.isIncludeOverlap && shiftvector.x > config.overlapOffset)
                                 {
                                     continue;
                                 }

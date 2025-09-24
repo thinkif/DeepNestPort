@@ -17,6 +17,11 @@
         public bool mergeLines = false;
         public bool simplify;
 
+        /// <summary>
+        /// 元素包含搭接量时，要求必须靠左侧，此时的搭接量边距的值，可以是0也可以是负数
+        /// </summary>
+        public double overlapOffset = 0;
+
         #region port features (don't exist in the original DeepNest project)
         public bool clipByHull = false;
         public bool clipByRects = true; //clip by AABB + MinRect

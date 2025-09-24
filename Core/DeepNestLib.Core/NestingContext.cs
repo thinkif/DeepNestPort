@@ -250,7 +250,7 @@ namespace DeepNestLib
             }
         }
 
-        public void AddSheet(int w, int h, int src)
+        public void AddSheet(double w, double h, int src)
         {
             var tt = new RectangleSheet();
             tt.Name = "sheet" + (Sheets.Count + 1);
