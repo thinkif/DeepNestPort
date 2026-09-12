@@ -747,6 +747,232 @@ namespace DeepNestLib
             return (boundArea / usableArea) > 3 || holeArea > (partArea * 0.2);
         }
 
+        private static PlacementItem CreatePlacementCandidate(NFP part, double x, double y)
+        {
+            return new PlacementItem()
+            {
+                id = part.id,
+                x = x,
+                y = y,
+                source = part.source.Value,
+                rotation = part.rotation
+            };
+        }
+
+        private static double GetOverlapAnchorX(NFP part, SvgNestConfig config)
+        {
+            // 如果x是负数，则无法匹配到任何点，得不到正确的y值，所以这里需要加上一个偏移量，确保x是正数
+            // 此值只用于计算y值，不影响实际放置位置
+            var anchorOffsetX = config.overlapOffset <= 0d ? 0.01 : config.overlapOffset;
+            return part[0].x + anchorOffsetX;
+        }
+
+        // overlap零件的候选y是在合成竖线(x≈0)上计算的，而真实放置位置的x是overlapOffset，
+        // 两者存在x向偏差；已放置零件的禁区必须先按该偏差平移，才能在正确的相对位置上求交
+        private static double GetOverlapFrameShiftX(NFP part, SvgNestConfig config)
+        {
+            if (!part.isIncludeOverlap)
+            {
+                return 0;
+            }
+
+            return GetOverlapAnchorX(part, config) - (part[0].x + config.overlapOffset);
+        }
+
+        private static List<double> GetPolygonLineCrossings(NFP polygon, double anchorX)
+        {
+            var crossings = new List<double>();
+            if (polygon == null || polygon.length == 0)
+            {
+                return crossings;
+            }
+
+            for (var i = 0; i < polygon.length; i++)
+            {
+                var current = polygon[i];
+                var next = polygon[(i + 1) % polygon.length];
+
+                if (GeometryUtil._almostEqual(current.x, anchorX) && GeometryUtil._almostEqual(next.x, anchorX))
+                {
+                    crossings.Add(current.y);
+                    crossings.Add(next.y);
+                    continue;
+                }
+
+                var minX = Math.Min(current.x, next.x);
+                var maxX = Math.Max(current.x, next.x);
+                if (anchorX < minX && !GeometryUtil._almostEqual(anchorX, minX))
+                {
+                    continue;
+                }
+
+                if (anchorX > maxX && !GeometryUtil._almostEqual(anchorX, maxX))
+                {
+                    continue;
+                }
+
+                if (GeometryUtil._almostEqual(current.x, next.x))
+                {
+                    continue;
+                }
+
+                var t = (anchorX - current.x) / (next.x - current.x);
+                if ((t < 0 && !GeometryUtil._almostEqual(t, 0)) || (t > 1 && !GeometryUtil._almostEqual(t, 1)))
+                {
+                    continue;
+                }
+
+                crossings.Add(current.y + ((next.y - current.y) * t));
+            }
+
+            crossings.Sort();
+            return crossings;
+        }
+
+        // 通过竖线向上的射线与各多边形交点的奇偶性，判断y是否位于多边形集合内部
+        private static bool IsInsideRegions(List<List<double>> polygonsCrossings, double y)
+        {
+            if (polygonsCrossings == null)
+            {
+                return false;
+            }
+
+            var insideCount = 0;
+            foreach (var crossings in polygonsCrossings)
+            {
+                var above = 0;
+                foreach (var crossing in crossings)
+                {
+                    if (crossing > y && !GeometryUtil._almostEqual(crossing, y))
+                    {
+                        above++;
+                    }
+                }
+
+                if (above % 2 == 1)
+                {
+                    insideCount++;
+                }
+            }
+
+            return insideCount % 2 == 1;
+        }
+
+        private class FreeLineSegment
+        {
+            public double lo;
+            public double hi;
+            public bool isFree;
+        }
+
+        private static List<PlacementItem> GetPlacementCandidates(IEnumerable<NFP> candidateRegions, IEnumerable<NFP> sheetRegions, NFP part, SvgNestConfig config)
+        {
+            var candidates = new List<PlacementItem>();
+            if (candidateRegions == null)
+            {
+                return candidates;
+            }
+
+            if (!part.isIncludeOverlap)
+            {
+                foreach (var candidateRegion in candidateRegions)
+                {
+                    for (var i = 0; i < candidateRegion.length; i++)
+                    {
+                        candidates.Add(CreatePlacementCandidate(part, candidateRegion[i].x - part[0].x, candidateRegion[i].y - part[0].y));
+                    }
+                }
+
+                return candidates;
+            }
+
+            var fixedAnchorX = GetOverlapAnchorX(part, config);
+
+            // 与已放置零件相邻的候选点向自由区内缩半个间距，避免实际发生碰撞
+            var clearance = 0.5 * config.spacing;
+
+            // 自由区域：沿固定竖线用所有候选多边形交点的 even-odd 奇偶性切段
+            var regionCrossings = candidateRegions
+                .Where(r => r != null && r.length >= 3)
+                .Select(r => GetPolygonLineCrossings(r, fixedAnchorX))
+                .Where(list => list.Count > 0)
+                .ToList();
+
+            // 板材区域的交点，用于区分"已放置零件的禁区"与"板材边界"
+            var sheetCrossings = (sheetRegions ?? Enumerable.Empty<NFP>())
+                .Where(s => s != null && s.length >= 3)
+                .Select(s => GetPolygonLineCrossings(s, fixedAnchorX))
+                .ToList();
+
+            var segments = new List<FreeLineSegment>();
+            var parity = 0;
+            var segStart = double.NegativeInfinity;
+            foreach (var y in regionCrossings.SelectMany(z => z).OrderBy(z => z))
+            {
+                segments.Add(new FreeLineSegment { lo = segStart, hi = y, isFree = parity == 1 });
+                parity = parity == 0 ? 1 : 0;
+                segStart = y;
+            }
+
+            segments.Add(new FreeLineSegment { lo = segStart, hi = double.PositiveInfinity, isFree = parity == 1 });
+
+            var anchorYs = new List<double>();
+            for (var s = 0; s < segments.Count; s++)
+            {
+                var segment = segments[s];
+                if (!segment.isFree || segment.hi - segment.lo < 0.0000001)
+                {
+                    continue;
+                }
+
+                // 在自由区间端点略外侧探测板材归属：在板材内但不是自由区 => 是已放置零件的禁区，
+                // 候选y需留出clearance；在板材外 => 是板材边界，保持贴边
+                var probeEpsilon = Math.Max(0.0001, clearance * 0.01);
+                var placedBelow = !double.IsNegativeInfinity(segment.lo) &&
+                    IsInsideRegions(sheetCrossings, segment.lo - probeEpsilon);
+                if (placedBelow)
+                {
+                    var y = segment.lo + clearance;
+                    if (y < segment.hi && !GeometryUtil._almostEqual(y, segment.hi))
+                    {
+                        anchorYs.Add(y);
+                    }
+                }
+                else if (!double.IsNegativeInfinity(segment.lo))
+                {
+                    // 板材边界保持贴边
+                    anchorYs.Add(segment.lo);
+                }
+
+                // 上侧端点同理向下内缩
+                var placedAbove = !double.IsPositiveInfinity(segment.hi) &&
+                    IsInsideRegions(sheetCrossings, segment.hi + probeEpsilon);
+                if (placedAbove)
+                {
+                    var y = segment.hi - clearance;
+                    if (y > segment.lo && !GeometryUtil._almostEqual(y, segment.lo))
+                    {
+                        anchorYs.Add(y);
+                    }
+                }
+                else if (!double.IsPositiveInfinity(segment.hi))
+                {
+                    anchorYs.Add(segment.hi);
+                }
+            }
+
+            foreach (var anchorY in anchorYs)
+            {
+                var candidate = CreatePlacementCandidate(part, config.overlapOffset, anchorY - part[0].y);
+                if (!candidates.Any(existing => GeometryUtil._almostEqual(existing.y, candidate.y)))
+                {
+                    candidates.Add(candidate);
+                }
+            }
+
+            return candidates;
+        }
+
         public static SheetPlacement placeParts(NFP[] sheets, NFP[] parts, SvgNestConfig config, int nestindex)
         {
             if (sheets == null || sheets.Count() == 0) return null;
@@ -956,45 +1182,28 @@ namespace DeepNestLib
                     if (placed.Count == 0)
                     {
                         // first placement, put it on the top left corner
-                        for (j = 0; j < sheetNfp.Count(); j++)
+                        var firstPlacementCandidates = GetPlacementCandidates(sheetNfp, sheetNfp, part, config);
+                        for (j = 0; j < firstPlacementCandidates.Count; j++)
                         {
-                            for (k = 0; k < sheetNfp[j].length; k++)
+                            var candidate = firstPlacementCandidates[j];
+                            // 修改为(上边优先):
+                            if (position == null ||
+                                candidate.y < position.y ||
+                                (GeometryUtil._almostEqual(candidate.y, position.y) && candidate.x < position.x))
                             {
-                                // if (position == null ||
-                                //     ((sheetNfp[j][k].x - part[0].x) < position.x) ||
-                                //     (
-                                //     GeometryUtil._almostEqual(sheetNfp[j][k].x - part[0].x, position.x)
-                                //     && ((sheetNfp[j][k].y - part[0].y) < position.y))
-                                //     )
-                                // 修改为(上边优先):
-                                if (position == null ||
-                                    ((sheetNfp[j][k].y - part[0].y) < position.y) ||
-                                    (GeometryUtil._almostEqual(sheetNfp[j][k].y - part[0].y, position.y)
-                                     && ((sheetNfp[j][k].x - part[0].x) < position.x)))
-                                {
-                                    position = new PlacementItem()
-                                    {
-                                        x = sheetNfp[j][k].x - part[0].x,
-                                        y = sheetNfp[j][k].y - part[0].y,
-                                        id = part.id,
-                                        rotation = part.rotation,
-                                        source = part.source.Value
-
-                                    };
-
-                                    if (part.isIncludeOverlap)
-                                    {
-                                        position.x = config.overlapOffset;
-                                    }
-
-                                    part.x = position.x;
-                                    part.y = position.y;
-                                }
+                                position = candidate;
+                                part.x = position.x;
+                                part.y = position.y;
                             }
                         }
 
                         if (position == null)
                         {
+                            if (part.isIncludeOverlap)
+                            {
+                                continue;
+                            }
+
                             throw new Exception("position null");
                             //console.log(sheetNfp);
                         }
@@ -1078,7 +1287,19 @@ namespace DeepNestLib
                     List<List<IntPoint>> _finalNfp = new List<List<IntPoint>>();
                     clipper = new ClipperLib.Clipper();
 
-                    clipper.AddPaths(combinedNfp, ClipperLib.PolyType.ptClip, true);
+                    // overlap零件的候选y是在合成竖线(x≈0)上求的，而真实放置位置的x是overlapOffset，
+                    // 已放置零件的禁区必须按该偏差平移后求差，否则求出的是错误相对位置下的可用区域
+                    var candidateZones = combinedNfp;
+                    var frameShiftX = GetOverlapFrameShiftX(part, config);
+                    if (Math.Abs(frameShiftX) > 0)
+                    {
+                        var shiftScaled = frameShiftX * config.clipperScale;
+                        candidateZones = combinedNfp
+                            .Select(z => z.Select(p => new ClipperLib.IntPoint(p.X + shiftScaled, (double)p.Y)).ToList())
+                            .ToList();
+                    }
+
+                    clipper.AddPaths(candidateZones, ClipperLib.PolyType.ptClip, true);
 
                     clipper.AddPaths(clipperSheetNfp.Select(z => z.ToList()).ToList(), ClipperLib.PolyType.ptSubject, true);
 
@@ -1114,7 +1335,6 @@ namespace DeepNestLib
                     minarea = null;
                     double? minx = null;
                     double? miny = null;
-                    NFP nf;
                     double area = 0;
                     PlacementItem shiftvector = null;
 
@@ -1147,24 +1367,13 @@ namespace DeepNestLib
                     {
                         allpoints = getHull(allpoints);
                     }
-                    for (j = 0; j < finalNfp.Count; j++)
+                    var sheetRegionsNest = clipperSheetNfp
+                        .Select(p => Background.toNestCoordinates(p.ToArray(), config.clipperScale))
+                        .ToList();
+                    var placementCandidates = GetPlacementCandidates(finalNfp, sheetRegionsNest, part, config);
+                    for (j = 0; j < placementCandidates.Count; j++)
                     {
-                        nf = finalNfp[j];
-                        //console.log('evalnf',nf.length);
-                        for (k = 0; k < nf.length; k++)
-                        {
-                            shiftvector = new PlacementItem()
-                            {
-                                id = part.id,
-                                x = nf[k].x - part[0].x,
-                                y = nf[k].y - part[0].y,
-                                source = part.source.Value,
-                                rotation = part.rotation
-                            };
-                            if (part.isIncludeOverlap)
-                            {
-                                shiftvector.x = config.overlapOffset;
-                            }
+                        shiftvector = placementCandidates[j];
                             PolygonBounds rectbounds = null;
                             if (config.placementType == PlacementTypeEnum.gravity || config.placementType == PlacementTypeEnum.box)
                             {
@@ -1289,7 +1498,6 @@ namespace DeepNestLib
                                     position.mergedSegments = merged.segments;
                                 }
                             }
-                        }
 
                     }
 
