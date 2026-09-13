@@ -792,37 +792,15 @@ namespace DeepNestLib
                 var current = polygon[i];
                 var next = polygon[(i + 1) % polygon.length];
 
-                if (GeometryUtil._almostEqual(current.x, anchorX) && GeometryUtil._almostEqual(next.x, anchorX))
+                // 标准半开区间射线求交规则: 边严格跨越竖线才计交点。
+                // 顶点恰好落在竖线上时, 穿越顶点计1次、触碰顶点计0次, 不会重复计数;
+                // 旧实现对顶点压线的两条邻边都计交点, 奇偶性错乱会把大片自由区
+                // 误判为禁区, 导致overlap零件被放到画布底部(中部留白)
+                if ((current.x > anchorX) != (next.x > anchorX))
                 {
-                    crossings.Add(current.y);
-                    crossings.Add(next.y);
-                    continue;
+                    var t = (anchorX - current.x) / (next.x - current.x);
+                    crossings.Add(current.y + ((next.y - current.y) * t));
                 }
-
-                var minX = Math.Min(current.x, next.x);
-                var maxX = Math.Max(current.x, next.x);
-                if (anchorX < minX && !GeometryUtil._almostEqual(anchorX, minX))
-                {
-                    continue;
-                }
-
-                if (anchorX > maxX && !GeometryUtil._almostEqual(anchorX, maxX))
-                {
-                    continue;
-                }
-
-                if (GeometryUtil._almostEqual(current.x, next.x))
-                {
-                    continue;
-                }
-
-                var t = (anchorX - current.x) / (next.x - current.x);
-                if ((t < 0 && !GeometryUtil._almostEqual(t, 0)) || (t > 1 && !GeometryUtil._almostEqual(t, 1)))
-                {
-                    continue;
-                }
-
-                crossings.Add(current.y + ((next.y - current.y) * t));
             }
 
             crossings.Sort();
@@ -1001,8 +979,11 @@ namespace DeepNestLib
 
             // 按照以下优先级对parts进行排序:
             // 优化零件排序策略:
+            // overlap零件必须最先放置: 它们x固定在最左侧一列, 若让普通零件先占左列,
+            // 会把固定列切碎, 导致后续overlap零件被迫放到更低的位置(中部留白)或无法放置
             parts = parts
-                .OrderByDescending(p => IsContainerPart(p)) // 容器型零件优先
+                .OrderByDescending(p => p.isIncludeOverlap) // overlap零件优先, 保证左列从顶部连续堆叠
+                .ThenByDescending(p => IsContainerPart(p)) // 容器型零件优先
                 .ToArray();
 
             //if (nestindex > 2)
